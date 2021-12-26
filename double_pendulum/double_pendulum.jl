@@ -1,8 +1,8 @@
 using DifferentialEquations, Plots
-using BenchmarkTools
+using BenchmarkTools, StaticArrays
 
 
-function dynamics!(du,u,p,t)
+function dynamics(u,p,t)
     g, l₁, l₂, m₁, m₂ = p
     θ₁, ω₁, θ₂, ω₂ = u
 
@@ -10,19 +10,20 @@ function dynamics!(du,u,p,t)
     den1 = (m₁+m₂) * l₁ - m₂ * l₁ * cos(δ) * cos(δ)
     den2 = (l₂/l₁) * den1
 
-    du[1] = ω₁
-    du[2] = ((m₂ * l₁ * ω₁ * ω₁ * sin(δ) * cos(δ)
+    du1 = ω₁
+    du2 = ((m₂ * l₁ * ω₁ * ω₁ * sin(δ) * cos(δ)
                 + m₂ * g * sin(θ₂) * cos(δ)
                 + m₂ * l₂ * ω₂ * ω₂ * sin(δ)
                 - (m₁+m₂) * g * sin(θ₁))
             / den1)
-    du[3] = ω₂
+    du3 = ω₂
 
-    du[4] = ((- m₂ * l₂ * ω₂ * ω₂ * sin(δ) * cos(δ)
+    du4 = ((- m₂ * l₂ * ω₂ * ω₂ * sin(δ) * cos(δ)
                 + (m₁+m₂) * g * sin(θ₁) * cos(δ)
                 - (m₁+m₂) * l₁ * ω₁ * ω₁ * sin(δ)
                 - (m₁+m₂) * g * sin(θ₂))
             / den2)
+    SA[du1,du2,du3,du4]
 end
 
 
@@ -33,18 +34,16 @@ function make()
     l₂ = 1.0  # length of pendulum 2 in m
     m₁ = 1.0  # mass of pendulum 1 in kg
     m₂ = 1.0  # mass of pendulum 2 in kg
-    params = [g, l₁, l₂, m₁, m₂]
+    params = SA[g, l₁, l₂, m₁, m₂]
 
     # solve double pendulum
     tspan = (0.0, 100.0)
-    pendulum = [120.0, 0.0, -10.0, 0.0]
-    prob = ODEProblem(dynamics!, pendulum, tspan, params)
-    sol = solve(prob; dt=.01, adaptive=false)
-    
-    return p, sol
+    pendulum = SA[120.0, 0.0, -10.0, 0.0]
+    prob = ODEProblem(dynamics, pendulum, tspan, params)
+    sol = solve(prob; saveat=.01)
+
+    return params, sol
 end
-
-
 
 function plot_solution(params, sol)
     g, l₁, l₂, m₁, m₂ = params
