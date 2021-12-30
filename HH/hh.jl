@@ -1,7 +1,6 @@
-using Base: @kwdef
 using StaticArrays: @MVector, SA
 using Plots
-using DifferentialEquations: ODEProblem, solve
+using DifferentialEquations: ODEProblem, solve, Tsit5
 
 gr()
 
@@ -11,26 +10,6 @@ gr()
     https://hodgkin-huxley-tutorial.readthedocs.io/en/latest/_static/Hodgkin%20Huxley.html
 """
 
-# ----------------------------------- parms ---------------------------------- #
-@kwdef mutable struct SimulationParams
-    I₀::Float64 = 0.0  # input current
-    dt::Float64 = 0.01  # [ms]
-end
-
-@kwdef struct ModelParams
-    # capacitance
-    Cm = 1.0  # [μF/cm²]
-
-    # max conductances
-    gNa = 120  # [mS/cm²]
-    gK = 36  # [mS/cm²]
-    gL = 0.3  # [mS/cm²]
-
-    # Nerst potentials
-    ENa = 50  # [mV]
-    EK = -77  # [mV]
-    EL = 54.387  # [mV]
-end
 
 # -------------------------- channel gating kinetics ------------------------- #
 alphaM(V::Float64) = 0.1*(V+40.0)/(1.0 - exp(-(V+40.0) / 10.0))
@@ -53,13 +32,33 @@ I_L(V::Float64, gL::Float64, EL::Float64) = gL * (V - EL)
 
 # --------------------------------- HH model --------------------------------- #
 """
-    HH model simulation
+    Time varying input corrent
+"""
+function I₀(t) 
+    if t < 100
+        return 0.0
+    elseif t < 200
+        return 6.25
+    elseif t < 300
+        return 0.0
+    elseif t < 400
+        return 20.0
+    else
+        return 0.0
+    end
+end
+
+"""
+    Differential equations for HH model dynamics
 """
 function hh_dynamics(u, p, t)
+    # state vars
     V₀, m₀, h₀, n₀ = u
-    Cm, gNa, gK, gL, ENa, EK, EL, I₀ = p
 
-    V₁ = (I₀ - I_Na(V₀, m₀, h₀, gNa, ENa) - I_K(V₀, n₀, gK, EK) - I_L(V₀, gL, EL))/Cm
+    # params
+    Cm, gNa, gK, gL, ENa, EK, EL = p
+
+    V₁ = (I₀(t) - I_Na(V₀, m₀, h₀, gNa, ENa) - I_K(V₀, n₀, gK, EK) - I_L(V₀, gL, EL))/Cm
     
     m₁ = alphaM(V₀)*(1-m₀) - betaM(V₀)*m₀
     h₁ = alphaH(V₀)*(1-h₀) - betaH(V₀)*h₀
@@ -67,29 +66,31 @@ function hh_dynamics(u, p, t)
     SA[V₁, m₁, h₁, n₁]
 end
 
-function HH(sp::SimulationParams, mp::ModelParams; duration::Float64)
+function HH(;duration::Float64=1.0, dt::Float64=0.01)
     # define an initial state and a params array
     state = SA[
-        -70.0,  # [V] initial voltage
+        -65.0,  # [V] initial voltage
         0.05,  # m
-        0.54,  # h
-        0.34,  # n
+        0.6,  # h
+        0.32,  # n
     ]
     params = SA[
-        mp.Cm,
-        mp.gNa,
-        mp.gK,
-        mp.gL,
-        mp.ENa,
-        mp.EK,
-        mp.EL,
-        sp.I₀,
+        # capacitance
+        1.0,    # [μF/cm²] - Cm
+        # max conductances
+        120,    # [mS/cm²] - gNa
+        36,     # [mS/cm²] - gK
+        0.3,    # [mS/cm²] - gL
+        # Nerst potentials
+        50,     # [mV] - ENa
+        -77,    # [mV] - EK
+        -54.387  # [mV] - EL
     ]
  
     # solve problem
     tspan = (0.0, duration)
     prob = ODEProblem(hh_dynamics, state, tspan, params)
-    sol = solve(prob; saveat=sp.dt)
+    sol = solve(prob, Tsit5(); saveat=dt)
 
     return sol
 end
@@ -102,12 +103,12 @@ function plot_results(sol)
     m = sol[2, :]
     h = sol[3, :]
     n = sol[4, :]
-    layout = plot(layout = grid(4, 1))
+    I = I₀.(sol.t)
 
-    plot!(layout[1], sol.t, V, label=nothing, lw=3, ylabel="V")
-    plot!(layout[2], sol.t, m, color="red", label=nothing, lw=3, ylabel="m")
-    plot!(layout[3], sol.t, h, color="green", label=nothing, lw=3, ylabel="h")
-    plot!(layout[4], sol.t, n, color="black", label=nothing, xlabel="Time [s]", lw=3, ylabel="n")
+    layout = plot(layout = grid(2, 1))
+
+    plot!(layout[1], sol.t, V, label=nothing, lw=3, ylabel="V", title="Hodgkin Huxley", xticks=nothing)
+    plot!(layout[2], sol.t, I, label=nothing, lw=3, ylabel="I₀", color="black")
 
     @info "displaying"
     display(layout)
@@ -115,10 +116,7 @@ end
 
 # initialize params & run simulation
 @info "starting simulation"
-sp = SimulationParams(I₀=10.0)
-mp = ModelParams()
-
-sol = HH(sp, mp; duration=450.0)
+sol = HH(duration=450.0)
 
 # display plot
 plot_results(sol)
