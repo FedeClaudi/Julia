@@ -1,115 +1,126 @@
-using Revise
 using Base: @kwdef
-using StaticArrays: @MVector
+using StaticArrays: @MVector, SA
 using Plots
+using DifferentialEquations: ODEProblem, solve
 
 gr()
 
 """
     Julia implementation of the Hodgkin-Huxley model of single neuron membrane dynamics.
     Adapted from a tutorial in Python:
-        https://mark-kramer.github.io/Case-Studies-Python/HH.html
-    original Python code at:
-        https://github.com/Mark-Kramer/Case-Studies-Python
+    https://hodgkin-huxley-tutorial.readthedocs.io/en/latest/_static/Hodgkin%20Huxley.html
 """
 
 # ----------------------------------- parms ---------------------------------- #
-@kwdef struct SimulationParams
+@kwdef mutable struct SimulationParams
     I₀::Float64 = 0.0  # input current
-    duration::Float64 = 1  # [ms]
     dt::Float64 = 0.01  # [ms]
 end
 
 @kwdef struct ModelParams
-    # conductances
-    gNa₀ = 120  # [mS/cm²]
-    gK₀ = 36  # [mS/cm²]
-    gL₀ = 0.3  # [mS/cm²]
+    # capacitance
+    Cm = 1.0  # [μF/cm²]
 
-    # potentials
-    ENa = 115  # [mV]
-    EK = -12  # [mV]
-    EL = 10.6  # [mV]
+    # max conductances
+    gNa = 120  # [mS/cm²]
+    gK = 36  # [mS/cm²]
+    gL = 0.3  # [mS/cm²]
+
+    # Nerst potentials
+    ENa = 50  # [mV]
+    EK = -77  # [mV]
+    EL = 54.387  # [mV]
 end
 
-# ----------------------------- gating functions ----------------------------- #
-alphaM(V::Float64) = (2.5-0.1*(V+65)) / (exp(2.5-0.1*(V+65)) -1)
+# -------------------------- channel gating kinetics ------------------------- #
+alphaM(V::Float64) = 0.1*(V+40.0)/(1.0 - exp(-(V+40.0) / 10.0))
 
-betaM(V::Float64) = 4*exp(-(V+65)/18)
+betaM(V::Float64) = 4.0*exp(-(V+65.0) / 18.0)
 
-alphaH(V::Float64) = 0.07*exp(-(V+65)/20)
+alphaH(V::Float64) = 0.07*exp(-(V+65.0) / 20.0)
 
-betaH(V::Float64) = 1/(exp(3.0-0.1*(V+65))+1)
+betaH(V::Float64) = 1.0/(1.0 + exp(-(V+35.0) / 10.0))
 
-alphaN(V::Float64) = (0.1-0.01*(V+65)) / (exp(1-0.1*(V+65)) -1)
+alphaN(V::Float64) = 0.01*(V+55.0)/(1.0 - exp(-(V+55.0) / 10.0))
 
-betaN(V::Float64) = 0.125*exp(-(V+65)/80)
+betaN(V::Float64) = 0.125*exp(-(V+65) / 80.0)
 
+
+# ---------------------------- currents functions ---------------------------- #
+I_Na(V::Float64, m::Float64, h::Float64, gNa::Float64, ENa::Float64) = gNa * m^3 * h * (V - ENa)
+I_K(V::Float64, n::Float64, gK::Float64, EK::Float64) = gK * n^4 * (V-EK)
+I_L(V::Float64, gL::Float64, EL::Float64) = gL * (V - EL)
 
 # --------------------------------- HH model --------------------------------- #
 """
     HH model simulation
 """
-function HH(sp::SimulationParams, mp::ModelParams)
-    T = Int64(ceil(sp.duration/sp.dt))  # num sim steps
+function hh_dynamics(u, p, t)
+    V₀, m₀, h₀, n₀ = u
+    Cm, gNa, gK, gL, ENa, EK, EL, I₀ = p
 
-    # pre allocate values
-    t = (1 : T) * sp.dt  # time in [ms]
-    V = @MVector zeros(T)
-    m = @MVector zeros(T)
-    h = @MVector zeros(T)
-    n = @MVector zeros(T)
+    V₁ = (I₀ - I_Na(V₀, m₀, h₀, gNa, ENa) - I_K(V₀, n₀, gK, EK) - I_L(V₀, gL, EL))/Cm
+    
+    m₁ = alphaM(V₀)*(1-m₀) - betaM(V₀)*m₀
+    h₁ = alphaH(V₀)*(1-h₀) - betaH(V₀)*h₀
+    n₁ = alphaN(V₀)*(1-n₀) - betaN(V₀)*n₀
+    SA[V₁, m₁, h₁, n₁]
+end
 
-    # set initial values
-    V[1]=-70.0
-    m[1]=0.05
-    h[1]=0.54
-    n[1]=0.34
+function HH(sp::SimulationParams, mp::ModelParams; duration::Float64)
+    # define an initial state and a params array
+    state = SA[
+        -70.0,  # [V] initial voltage
+        0.05,  # m
+        0.54,  # h
+        0.34,  # n
+    ]
+    params = SA[
+        mp.Cm,
+        mp.gNa,
+        mp.gK,
+        mp.gL,
+        mp.ENa,
+        mp.EK,
+        mp.EL,
+        sp.I₀,
+    ]
+ 
+    # solve problem
+    tspan = (0.0, duration)
+    prob = ODEProblem(hh_dynamics, state, tspan, params)
+    sol = solve(prob; saveat=sp.dt)
 
-    # simulation loop
-    for i in 1:T-1
-        Vₜ = view(V, i)[1]
-        mₜ = view(m, i)[1]
-        hₜ = view(h, i)[1]
-        nₜ = view(n, i)[1]
-
-
-        V[i+1] = Vₜ + sp.dt*(
-            mp.gNa₀ * mₜ^3 * hₜ * (mp.ENa-(Vₜ+65)) + 
-            mp.gK₀ * nₜ^4 * (mp.EK-(Vₜ+65)) + 
-            mp.gL₀ * (mp.EL-(Vₜ+65)) + sp.I₀
-        )
-        
-        m[i+1] = mₜ + sp.dt*(alphaM(Vₜ)*(1-mₜ) - betaM(Vₜ)*mₜ)
-        h[i+1] = hₜ + sp.dt*(alphaH(Vₜ)*(1-hₜ) - betaH(Vₜ)*hₜ)
-        n[i+1] = nₜ + sp.dt*(alphaN(Vₜ)*(1-nₜ) - betaN(Vₜ)*nₜ)
-    end
-
-    return V, m, h, n, t
+    return sol
 end
 
 
-function plot_results(V, m, h, n, t)
+function plot_results(sol)
     @info "Showing plots"
+
+    V = sol[1, :]
+    m = sol[2, :]
+    h = sol[3, :]
+    n = sol[4, :]
     layout = plot(layout = grid(4, 1))
 
-    plot!(layout[1], t, V, label=nothing, lw=3, ylabel="V")
-    plot!(layout[2], t, m, color="red", label=nothing, lw=3, ylabel="m")
-    plot!(layout[3], t, h, color="green", label=nothing, lw=3, ylabel="h")
-    plot!(layout[4], t, n, color="black", label=nothing, xlabel="Time [s]", lw=3, ylabel="n")
+    plot!(layout[1], sol.t, V, label=nothing, lw=3, ylabel="V")
+    plot!(layout[2], sol.t, m, color="red", label=nothing, lw=3, ylabel="m")
+    plot!(layout[3], sol.t, h, color="green", label=nothing, lw=3, ylabel="h")
+    plot!(layout[4], sol.t, n, color="black", label=nothing, xlabel="Time [s]", lw=3, ylabel="n")
 
+    @info "displaying"
     display(layout)
 end
 
-# TODO use ODEs integration to get results instead of manual loops
-
-# run simulation
+# initialize params & run simulation
 @info "starting simulation"
-sp = SimulationParams(I₀=0.0, duration=10.0)
+sp = SimulationParams(I₀=10.0)
 mp = ModelParams()
-V, m, h, n, t = @time HH(sp, mp)
+
+sol = HH(sp, mp; duration=450.0)
 
 # display plot
-plot_results(V, m, h, n, t)
+plot_results(sol)
 
 print("done")
