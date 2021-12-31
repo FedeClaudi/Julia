@@ -1,4 +1,4 @@
-using StaticArrays: @MVector, SA
+using StaticArrays: SA, @MVector
 using Plots
 using DifferentialEquations: ODEProblem, solve, Tsit5
 
@@ -25,35 +25,52 @@ alphaN(V::Float64) = 0.01*(V+55.0)/(1.0 - exp(-(V+55.0) / 10.0))
 betaN(V::Float64) = 0.125*exp(-(V+65) / 80.0)
 
 
+alphaM(V) = 0.1*(V+40.0)/(1.0 - exp(-(V+40.0) / 10.0))
+
+betaM(V) = 4.0*exp(-(V+65.0) / 18.0)
+
+alphaH(V) = 0.07*exp(-(V+65.0) / 20.0)
+
+betaH(V) = 1.0/(1.0 + exp(-(V+35.0) / 10.0))
+
+alphaN(V) = 0.01*(V+55.0)/(1.0 - exp(-(V+55.0) / 10.0))
+
+betaN(V) = 0.125*exp(-(V+65) / 80.0)
+
 # ---------------------------- currents functions ---------------------------- #
 I_Na(V::Float64, m::Float64, h::Float64, gNa::Float64, ENa::Float64) = gNa * m^3 * h * (V - ENa)
 I_K(V::Float64, n::Float64, gK::Float64, EK::Float64) = gK * n^4 * (V-EK)
 I_L(V::Float64, gL::Float64, EL::Float64) = gL * (V - EL)
+
+I_Na(V, m, h, gNa, ENa) = gNa * m^3 * h * (V - ENa)
+I_K(V, n, gK, EK) = gK * n^4 * (V-EK)
+I_L(V, gL, EL) = gL * (V - EL)
 
 # --------------------------------- HH model --------------------------------- #
 """
     Time varying input corrent
 """
 function I₀(t) 
-    if t < 100
-        return 0.0
-    elseif t < 200
-        return 6.25
-    elseif t < 300
-        return 0.0
-    elseif t < 400
-        return 20.0
-    else
-        return 0.0
-    end
+    # if t < 100
+    #     return 0.0
+    # elseif t < 200
+    #     return 6.25
+    # elseif t < 300
+    #     return 0.0
+    # elseif t < 400
+    #     return 20.0
+    # else
+    #     return 0.0
+    # end
+    return 40.0
 end
 
 """
     Differential equations for HH model dynamics
 """
-function hh_dynamics(u, p, t)
+function hh_dynamics(x, p, t)
     # state vars
-    V₀, m₀, h₀, n₀ = u
+    V₀, m₀, h₀, n₀ = x
 
     # params
     Cm, gNa, gK, gL, ENa, EK, EL = p
@@ -63,7 +80,8 @@ function hh_dynamics(u, p, t)
     m₁ = alphaM(V₀)*(1-m₀) - betaM(V₀)*m₀
     h₁ = alphaH(V₀)*(1-h₀) - betaH(V₀)*h₀
     n₁ = alphaN(V₀)*(1-n₀) - betaN(V₀)*n₀
-    SA[V₁, m₁, h₁, n₁]
+    # SA[V₁, m₁, h₁, n₁] 
+    @MVector [V₁, m₁, h₁, n₁] 
 end
 
 function HH(;duration::Float64=1.0, dt::Float64=0.01)
@@ -114,11 +132,14 @@ function plot_results(sol)
     display(layout)
 end
 
-# initialize params & run simulation
-@info "starting simulation"
-sol = HH(duration=450.0)
 
-# display plot
-plot_results(sol)
+function run_simulation()
+    # initialize params & run simulation
+    @info "starting simulation"
+    sol = HH(duration=450.0)
 
-print("done")
+    # display plot
+    plot_results(sol)
+
+    print("done")
+end
